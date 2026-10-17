@@ -16,42 +16,37 @@ class Capture_Input{
     	struct termios oldt, newt;
      	bool& tracker;
 
+      	//grab terminal attributes for POSIX standard input and nickname it oldt
       	int grab(){
      		bool OT_GRAB = tcgetattr(STDIN_FILENO, &oldt);
-            if (!OT_GRAB){
+            if (OT_GRAB){
                 //throw "Error getting terminal attributes\r\n";
                 throw std::runtime_error("Error getting terminal attributes\r\n");
             }
                 return 0;
         }
 
+        //set terminal attributes
       	int set(){
       		bool set_result = tcsetattr(STDIN_FILENO, TCSANOW, &newt);	
-        	if (!set_result){
+        	if (set_result){
          		//throw "Error setting terminal attributes\r\n";
          		throw std::runtime_error("Error setting terminal attributes\r\n");
         	}	
-         	
-          	else{
-           		return 0;
-           	}
-             
+           	return 0;            
         }
 
         int return_terminal(){
         	bool setback = tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
             if (setback){
-                throw "Error setting terminal attributes back to original\r\n";
-                //throw std::runtime_error("Error setting terminal attributes back to original\r\n");
+                perror("Failure destructing");
             }
-            else{
-                return 0;
-            }
+            return 0;
         }
+        
         int keyboard(){
             char ch;
 
-            //fix this, print number each byte
             std::cout << "Press any keys, press (CTRL-Q) to quit\r\n";   
             while (true){
                 ssize_t n = read(STDIN_FILENO, &ch, 1); 
@@ -59,7 +54,6 @@ class Capture_Input{
                		perror("Error reading input");
                  	return -1;
                 }
-                
                 if (n == 0){
                     return EOF;
                 }   
@@ -67,7 +61,7 @@ class Capture_Input{
                   	std::cout << "You pressed: [" << ch << "]-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
                 }
                 else if (std::iscntrl(static_cast<unsigned char>(ch))){
-                  std::cout << "Unprintable character-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
+                  	std::cout << "Unprintable character-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
                 }
                 if (ch == '\x11') break; 
             }
@@ -84,7 +78,6 @@ class Capture_Input{
             set();
             keyboard();
         } 
-       
 
         ~Capture_Input(){
             tracker  = true;
@@ -94,7 +87,7 @@ class Capture_Input{
 
 
 int main(){
-         
+	
     bool destroyed = false;
     {
     	try{
@@ -108,6 +101,8 @@ int main(){
        	*/
       	catch(const std::exception& e){
        		std::cout << e.what() <<"\r\n";
+         	return errno;
+         	return 1;
        	}  
     }
     
