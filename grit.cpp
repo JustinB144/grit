@@ -1,9 +1,13 @@
+#include <cerrno>
+#include <exception>
+#include <stdexcept>
 #include<termios.h>
 #include<unistd.h>
 #include<iostream>
 #include<stdio.h>
 #include<stdlib.h>
 #include<string>
+#include<cctype>
 
 class Capture_Input{
 
@@ -13,33 +17,32 @@ class Capture_Input{
      	bool& tracker;
 
       	int grab(){
-     		int OT_GRAB = tcgetattr(STDIN_FILENO, &oldt);
-            if (OT_GRAB == -1){
-                perror("Error getting terminal attributes\r\n");
-                return 1;
+     		bool OT_GRAB = tcgetattr(STDIN_FILENO, &oldt);
+            if (!OT_GRAB){
+                //throw "Error getting terminal attributes\r\n";
+                throw std::runtime_error("Error getting terminal attributes\r\n");
             }
-            else{
                 return 0;
-       	
-            }
         }
 
       	int set(){
-      		int set_result = tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-     		if (set_result == -1){
-      			perror("Error setting terminal attributes\r\n");
-                return 1;
-       		}
-            else{
-       		    return 0;
-            }
+      		bool set_result = tcsetattr(STDIN_FILENO, TCSANOW, &newt);	
+        	if (!set_result){
+         		//throw "Error setting terminal attributes\r\n";
+         		throw std::runtime_error("Error setting terminal attributes\r\n");
+        	}	
+         	
+          	else{
+           		return 0;
+           	}
+             
         }
 
         int return_terminal(){
-        	int setback = tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-            if (setback == -1){
-                perror("Error setting terminal attributes back to original\r\n");
-                return 1;
+        	bool setback = tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+            if (setback){
+                throw "Error setting terminal attributes back to original\r\n";
+                //throw std::runtime_error("Error setting terminal attributes back to original\r\n");
             }
             else{
                 return 0;
@@ -52,25 +55,32 @@ class Capture_Input{
             std::cout << "Press any keys, press (CTRL-Q) to quit\r\n";   
             while (true){
                 ssize_t n = read(STDIN_FILENO, &ch, 1); 
-                if (n > 0){
-                if (ch == '\x11') break;
+                if(n == -1){
+               		perror("Error reading input");
+                 	return -1;
+                }
                 
-                std::cout << "You pressed: [" << ch << "]-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
-
+                if (n == 0){
+                    return EOF;
                 }   
+                else if (std::isprint(static_cast<unsigned char>(ch))){
+                  	std::cout << "You pressed: [" << ch << "]-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
+                }
+                else if (std::iscntrl(static_cast<unsigned char>(ch))){
+                  std::cout << "Unprintable character-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
+                }
+                if (ch == '\x11') break; 
             }
-            return 0;
-        } 
-
+            return 0;            
+        }
         
         Capture_Input(bool& tracker_v) : tracker(tracker_v){
-            std::cout << "Construct executed\r\n";
-        
             tracker  = false;
 
             grab();
             newt = oldt;
             cfmakeraw(&newt);
+            std::cout << "Construct executed\r\n";
             set();
             keyboard();
         } 
@@ -87,9 +97,20 @@ int main(){
          
     bool destroyed = false;
     {
-        Capture_Input obj(destroyed);
-    }
+    	try{
+        	Capture_Input obj(destroyed);
+     	}
 
+      	/* 
+     	catch(const char* msg){
+          	std::cout << "Error: " << msg <<"\r\n";
+      	}
+       	*/
+      	catch(const std::exception& e){
+       		std::cout << e.what() <<"\r\n";
+       	}  
+    }
+    
     if(destroyed){
         std::cout << "Destruct executed = " << std::boolalpha << destroyed << "\r\n";
     }
