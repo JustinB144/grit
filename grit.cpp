@@ -47,10 +47,12 @@ class Capture_Input{
         }
         int keyboard(){
             char ch;
-        
+       
+
+            //fix this, print number each byte
             std::cout << "Press any keys, press (q) to quit" << std::endl;   
             while (true){
-                ssize_t n = read(STDIN_FILENO, &ch, 1); //why do I have to do a reference in this?
+                ssize_t n = read(STDIN_FILENO, &ch, 1); 
                 if (n > 0){ if (ch == 'q') break;
                     std::cout << "You pressed: [" << ch << "]\r\n";     
                 }   
@@ -59,33 +61,19 @@ class Capture_Input{
         } 
 
         
-        
         Capture_Input(bool& tracker_v) : tracker(tracker_v){
             std::cout << "Construct executed\r\n";
+        
             tracker  = false;
 
             grab();
             newt = oldt;
-
-            
-            
-            
-            
-            newt = oldt;
             cfmakeraw(&newt);
-            newt.c_cc[VMIN] = 1;
-            newt.c_cc[VTIME] = 0;
-            newt.c_cc[VLNEXT] = _POSIX_VDISABLE;
-            newt.c_cc[VSTART] = _POSIX_VDISABLE;
-            newt.c_cc[VINTR] = _POSIX_VDISABLE;
-            newt.c_cc[VSTOP] = _POSIX_VDISABLE;
-            newt.c_cc[VSUSP] = _POSIX_VDISABLE;
             set();
             keyboard();
-
-            
         } 
-        
+       
+
         ~Capture_Input(){
             tracker  = true;
             return_terminal();
