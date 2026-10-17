@@ -13,14 +13,14 @@ class Capture_Input{
 
     private: 
     public:
+    	//oldt = the original terminal settings (kept so we can restore them), newt = the raw-mode copy we build
     	struct termios oldt, newt;
      	bool& tracker;
 
-      	//grab terminal attributes for POSIX standard input and nickname it oldt
+      	//grab terminal attributes for POSIX standard input into address oldt
       	int grab(){
      		bool OT_GRAB = tcgetattr(STDIN_FILENO, &oldt);
             if (OT_GRAB){
-                //throw "Error getting terminal attributes\r\n";
                 throw std::runtime_error("Error getting terminal attributes\r\n");
             }
                 return 0;
@@ -30,25 +30,28 @@ class Capture_Input{
       	int set(){
       		bool set_result = tcsetattr(STDIN_FILENO, TCSANOW, &newt);	
         	if (set_result){
-         		//throw "Error setting terminal attributes\r\n";
          		throw std::runtime_error("Error setting terminal attributes\r\n");
         	}	
            	return 0;            
         }
 
+        //put the original settings (oldt) back; the destructor calls this
         int return_terminal(){
         	bool setback = tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
             if (setback){
                 perror("Failure destructing");
+                return errno;
             }
             return 0;
         }
         
+        //read one byte at a time and print its value, until ctrl-q (byte 17)
         int keyboard(){
             char ch;
 
             std::cout << "Press any keys, press (CTRL-Q) to quit\r\n";   
             while (true){
+                //read 1 byte from standard input into ch; n = how many bytes arrived (-1 error, 0 end of input)
                 ssize_t n = read(STDIN_FILENO, &ch, 1); 
                 if(n == -1){
                		perror("Error reading input");
@@ -68,10 +71,12 @@ class Capture_Input{
             return 0;            
         }
         
+        //runs when the object is created: save the settings, switch to raw mode, start reading keys
         Capture_Input(bool& tracker_v) : tracker(tracker_v){
             tracker  = false;
 
             grab();
+            //copy the original settings, then turn the copy into raw mode
             newt = oldt;
             cfmakeraw(&newt);
             std::cout << "Construct executed\r\n";
@@ -79,12 +84,12 @@ class Capture_Input{
             keyboard();
         } 
 
+        //runs automatically when obj goes out of scope: restore the terminal
         ~Capture_Input(){
             tracker  = true;
             return_terminal();
         }       
 };        
-
 
 int main(){
 	
@@ -93,15 +98,8 @@ int main(){
     	try{
         	Capture_Input obj(destroyed);
      	}
-
-      	/* 
-     	catch(const char* msg){
-          	std::cout << "Error: " << msg <<"\r\n";
-      	}
-       	*/
       	catch(const std::exception& e){
-       		std::cout << e.what() <<"\r\n";
-         	return errno;
+       		std::cout << e.what() << errno;
          	return 1;
        	}  
     }
