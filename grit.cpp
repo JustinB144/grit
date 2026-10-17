@@ -47,14 +47,16 @@ class Capture_Input{
         }
         int keyboard(){
             char ch;
-       
 
             //fix this, print number each byte
-            std::cout << "Press any keys, press (q) to quit" << std::endl;   
+            std::cout << "Press any keys, press (CTRL-Q) to quit\r\n";   
             while (true){
                 ssize_t n = read(STDIN_FILENO, &ch, 1); 
-                if (n > 0){ if (ch == 'q') break;
-                    std::cout << "You pressed: [" << ch << "]\r\n";     
+                if (n > 0){
+                if (ch == '\x11') break;
+                
+                std::cout << "You pressed: [" << ch << "]-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
+
                 }   
             }
             return 0;
