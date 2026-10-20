@@ -2,7 +2,7 @@
 CXX = g++ 
 
 # Compiler Flags
-CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -g -fsanitize=address,undefined 
+CXXFLAGS = -std=c++20 -Wall -Wextra -pedantic -g -fsanitize=address,undefined -MMD
 
 # Target
 TARGET = grit
@@ -14,9 +14,11 @@ COMPILE = $(CXX) $(CXXFLAGS)
 grit: grit.cpp
 	$(COMPILE) grit.cpp -o grit
 
+# Include the generated dependancy files if they exist
+-include grit.d
 # Declare phony
 .PHONY: clean
 
 # clean out executable
 clean:
-	rm -f grit
+	rm -f grit grit.d
