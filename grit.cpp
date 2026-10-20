@@ -33,7 +33,7 @@ class Capture_Input{
         //set terminal attributes
       	int set(){
      		if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) == -1){
-         		throw std::runtime_error("Error setting terminal attributes\r\n");
+         		throw std::runtime_error("Error setting terminal attributes\n");
         	}
            	return 0;
         }
@@ -54,10 +54,7 @@ class Capture_Input{
 
            	//bool get_wsize = ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
            	//if(get_wsize){
-            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1){
-                std::cout << "\033[2J\033[H" << std::flush;
-               	throw std::runtime_error("Error getting terminal window size");
-            }
+
 
             if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0){
 
@@ -101,7 +98,7 @@ class Capture_Input{
                 ssize_t n = read(STDIN_FILENO, &ch, 1);
 
                 if(n == -1){
-               		throw std::runtime_error("Error reading input");
+               		throw std::runtime_error("Error reading input\n");
                 }
                 if (n == 0){
                     return EOF;
@@ -110,7 +107,7 @@ class Capture_Input{
                   	//std::cout << "You pressed: [" << ch << "]-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
                 }
                 else if (std::iscntrl(static_cast<unsigned char>(ch))){
-                  	std::cout << "Unprintable character-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
+                  	//std::cout << "Unprintable character-" << "Byte Number: " << static_cast<int>(ch) << "\r\n";
                 }
                 if (ch == '\x11'){
                     std::cout << "\033[2J\033[H" << std::flush;
@@ -167,6 +164,6 @@ int main(){
     }
 
     if(destroyed){
-        std::cout << "Destruct executed = " << std::boolalpha << destroyed << "\r\n";
+        //std::cout << "Destruct executed = " << std::boolalpha << destroyed << "\r\n";
     }
 }
