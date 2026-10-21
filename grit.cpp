@@ -74,7 +74,7 @@ struct Editor{
     int y = 1;
     int max_row;
     int max_col;
-    //draw one full screen: clear, the welcome message, a ~ on every row, then cursor to the top left
+    //draw one full screen: clear, the welcome message, a ~ on every row, then the cursor at (y, x)
     void window_size(){
         struct winsize w;
 
@@ -89,10 +89,10 @@ struct Editor{
 
         
         //the message sits two thirds of the way down
-        int msg_row = (max_row / 3) * 2;
+        int msg_row = (max_row / 3);
 
         std::ostringstream message;
-        message << "BLAISE TERMINAL";
+        message << "WELCOME TO BLAISE TERMINAL";
         std::string welcome = message.str();
         //center = middle of the screen minus half the message; done in int so it can go negative safely
         int Swelcome = static_cast<int>(welcome.size());
@@ -117,58 +117,93 @@ struct Editor{
         std::cout << "\033[" << y << ";" << x << "H" << std::flush;
     }
     //the editor's main loop: redraw, wait for one key, repeat until ctrl-q (byte 17)
-
+    enum class Keys{
+        arrow_up,
+        arrow_down,
+        arrow_right,
+        arrow_left,
+        quit,
+        other,
+        pg_up,
+        pg_down,
+        home,
+        end,
+    };
+    Keys read_keys(){
+    	char seq[3];
+    	char ch;
+     	ssize_t n = read(STDIN_FILENO, &ch, 1);
+     	if(n == -1){
+      		throw std::runtime_error("Error reading input\n");
+		}
+		if (n == 0){
+			return Keys::quit;
+		}
+        if (ch == '\x11') return Keys::quit;
+        if (ch == '\x1b'){
+        	ssize_t s = read(STDIN_FILENO, seq, 3);
+	        if(s == -1){
+	         		throw std::runtime_error("Error reading input\n");
+			}
+            if (seq[0] == '['){
+                if (seq[1] == 'A') return Keys::arrow_up;
+                if (seq[1] == 'B') return Keys::arrow_down;
+                if (seq[1] == 'C') return Keys::arrow_right;
+                if (seq[1] == 'D') return Keys::arrow_left;
+                if (seq[1] == '5'){
+                    if (seq[2] == '~') return Keys::pg_up;
+                }
+                if (seq[1] == '6'){
+                    if (seq[2] == '~') return Keys::pg_down;
+                }
+                if (seq[1] == 'H') return Keys::home;
+                if (seq[1] == 'F') return Keys::end;
+            }
+            else{
+            	return Keys::other;
+            }
+        }
+    
+        if (ch != '\x1b') return Keys::other;
+        return Keys::quit;
+    }
 
     int keyboard(){
-	    char ch;
-	    char seq[2];
+	    
 		window_size();
 	    while (true){
-	    	
-			
-	        //read 1 byte from standard input into ch; n = how many bytes arrived (-1 error, 0 end of input)
-	        ssize_t n = read(STDIN_FILENO, &ch, 1);
-	
-	        if(n == -1){
-	            throw std::runtime_error("Error reading input\n");
-	        }
-	        if (n == 0){
-	            return EOF;
-	        }
-	        //ctrl-q: clear the screen so the shell comes back clean, then leave the loop
-	        if (ch == '\x11'){
-	            std::cout << "\033[2J\033[H" << std::flush;
-	            break;
-	        }
+	    			
 	        
-	        if (ch == '\x1b'){
-	            if (read(STDIN_FILENO, &seq[0], 1) > 0 && read(STDIN_FILENO, &seq[1], 1) > 0){
-	                if (seq[0] == '['){
-	                    switch(seq[1]){
-	                        case 'A' : y--; break;
-	                        case 'B' : y++; break;
-	                        case 'C' : x++; break;
-	                        case 'D' : x--; break;
-	                    }
+	       		
+				
+	        
+                switch(read_keys()){
+                    case Keys::arrow_up : y--; break;
+                    case Keys::arrow_down : y++; break;
+                    case Keys::arrow_right : x++; break;
+                    case Keys::arrow_left : x--; break;
+                    case Keys::quit : std::cout << "\033[2J\033[H" << std::flush; return 1;
+                    case Keys::other : break;
+                    case Keys::pg_up : y = 1; break;
+                    case Keys::pg_down : y = max_row; break;
+                    case Keys::home : x = 1; break;
+                    case Keys::end : x = max_col; break;
+                }
 						
-                        if (y > max_row){
-                            y = max_row;
-                        }
-                        if (y < 1){
-                             y = 1;
-                        }
-                        if (x > max_col){
-                             x = max_col;
-                        }
-                        if (x < 1){
-                            x = 1;
-                        }
-                        
-	                    window_size();
-	                }   
-	            }
-	        }
-			
+                if (y > max_row){
+                    y = max_row;
+                }
+                if (y < 1){
+                        y = 1;
+                }
+                if (x > max_col){
+                        x = max_col;
+                }
+                if (x < 1){
+                    x = 1;
+                }
+                
+                window_size();			
 	    }
 	    return 0;
     }
