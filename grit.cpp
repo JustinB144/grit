@@ -9,6 +9,8 @@
 #include<sstream>
 #include<cstring>
 #include<string>
+constexpr char ESC = '\x1b';
+constexpr char ctrl_q = '\x11';
 //owns the terminal's raw mode: constructing it turns raw mode on, destroying it turns it off
 class Raw_Mode{
 
@@ -49,6 +51,8 @@ class Raw_Mode{
             //copy the original settings, then turn the copy into raw mode
             newt = oldt;
             cfmakeraw(&newt);
+            newt.c_cc[VMIN] = 0;
+            newt.c_cc[VTIME] = 1;
             set();
         }
 
@@ -61,19 +65,13 @@ class Raw_Mode{
         Raw_Mode(const Raw_Mode&) = delete;
         Raw_Mode& operator=(const Raw_Mode&) = delete;
 };
-/*
-enum class arrows{
-    
-
-
-}
-*/
 
 struct Editor{
     int x = 1;
     int y = 1;
     int max_row;
     int max_col;
+    
     //draw one full screen: clear, the welcome message, a ~ on every row, then the cursor at (y, x)
     void window_size(){
         struct winsize w;
@@ -139,8 +137,10 @@ struct Editor{
 		if (n == 0){
 			return Keys::quit;
 		}
-        if (ch == '\x11') return Keys::quit;
-        if (ch == '\x1b'){
+        if (ch == ctrl_q) return Keys::quit;
+        if (ch == ESC){
+        	
+         	
         	ssize_t s = read(STDIN_FILENO, seq, 3);
 	        if(s == -1){
 	         		throw std::runtime_error("Error reading input\n");
@@ -164,8 +164,8 @@ struct Editor{
             }
         }
     
-        if (ch != '\x1b') return Keys::other;
-        return Keys::quit;
+        if (ch != ESC) return Keys::other;
+        return Keys::other;
     }
 
     int keyboard(){
