@@ -130,19 +130,21 @@ struct Editor{
     Keys read_keys(){
     	char seq[3];
     	char ch;
-     	ssize_t n = read(STDIN_FILENO, &ch, 1);
+        ssize_t n = 0;
+        while (n == 0){
+            n = read(STDIN_FILENO, &ch, 1);
+        }
      	if(n == -1){
       		throw std::runtime_error("Error reading input\n");
-		}
-		if (n == 0){
-			return Keys::quit;
 		}
         if (ch == ctrl_q) return Keys::quit;
         if (ch == ESC){
         	
-         	
-        	ssize_t s = read(STDIN_FILENO, seq, 3);
-	        if(s == -1){
+         	ssize_t s = read(STDIN_FILENO, seq, 3);
+	        if (s == 0){
+                return Keys::other;
+            }
+            if(s == -1){
 	         		throw std::runtime_error("Error reading input\n");
 			}
             if (seq[0] == '['){
