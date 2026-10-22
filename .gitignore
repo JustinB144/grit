@@ -4,3 +4,6 @@ grit
 .ASSIGNMENTS.md.swp
 .serena/
 grit.d
+
+keytest
+keytest.cpp
