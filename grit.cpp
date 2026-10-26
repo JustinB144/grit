@@ -15,6 +15,7 @@
 constexpr char ESC = '\x1b';
 constexpr char ctrl_q = '\x11';
 constexpr char TAB = '\x09';
+constexpr char backspace = '\x7f';
 //owns the terminal's raw mode: constructing it turns raw mode on, destroying it turns it off
 class Raw_Mode{
 
@@ -69,31 +70,67 @@ class Raw_Mode{
         Raw_Mode(const Raw_Mode&) = delete;
         Raw_Mode& operator=(const Raw_Mode&) = delete;
 };
+//screen columns from one tab stop to the next
+constexpr int TAB_STOP = 4;
+
+//how many screen columns the first `index` characters of `line` take up; that's also the
+//screen column (from 0) where character `index` is drawn. a tab jumps to the next tab stop
+int render_col(const std::string& line, int index){
+    int col = 0;
+    for (int i = 0; i < index && i < static_cast<int>(line.size()); ++i){
+        if (line[i] == TAB){
+            col = col + (TAB_STOP - (col % TAB_STOP));
+        }
+        else{
+            ++col;
+        }
+    }
+    return col;
+}
+
+//the line as it appears on screen: every tab becomes spaces up to the next tab stop
+//(the same rule as render_col, so the cursor and the text always agree)
+std::string render(const std::string& line){
+    std::string out;
+    for (char ch : line){
+        if (ch == TAB){
+            out += ' ';
+            while (out.size() % TAB_STOP != 0){
+                out += ' ';
+            }
+        }
+        else{
+            out += ch;
+        }
+    }
+    return out;
+}
 //the editor's state (cursor, screen size, scroll position, the file's lines) and everything that uses it
 struct Editor{
     //cursor position on the screen; both count from 1, like the terminal
     int x = 1;
     int y = 1;
     //screen size, filled in by window_size() on every redraw
-    int max_row;
-    int max_col;
-    //the file line shown on the top row (0 = the file's first line)
+    int max_row = 0;
+    int max_col = 0;
+    //the file's lines, one string per line, without line endings
     std::vector<std::string> hold_lines;
+    //the file line shown on the top row (0 = the file's first line);
     //the file line under the cursor is offset + y - 1
     int offset = 0;
+    //how many screen columns the cursor's line is shifted left (only that line is ever shifted)
     int coffset = 0;
+    //the cursor's position in the text: which character of the line it's on (a tab counts as 1)
     int c_index = 0;
+    //how many lines the file has
     int kv = 0;
-    int file_line = 0;
-    int text_length = 0;
-    int screen_col = 0;
-    int fline = 0;
-    int tlength = 0;
-    
+    char ch = 0;
+
     //draw one full screen: clear, one file line (or ~ past the end) per row,
     //the welcome message if no lines were loaded, then the cursor at (y, x)
     void window_size(){
         struct winsize w;
+
         int wv = static_cast<int>(hold_lines.size());
         //ask the kernel for the window size (rows and columns) into w
         if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1){
@@ -127,20 +164,21 @@ struct Editor{
         //no newline after the last row, or the screen would scroll up
         for (int i = 0; i < w.ws_row; ++i){
             if (offset + i < wv && wv > 0){
-               		//cut the line to the screen width so it never wraps onto the next row
-            		std::string lines_string = hold_lines.at(offset + i);
-              		std::string vsub = lines_string.substr(0, max_col);
-                		
-              
-              		if (vsub.size() < lines_string.size()) {
-                		vsub = lines_string.substr(0, max_col - 1);
-                 		std::cout << vsub << ">";
-               		}
-          		    else {
-             			std::cout << vsub;
-             		} 
-                
-                
+                //the line as it looks on screen (tabs expanded), so cutting by size cuts by screen columns
+                std::string shown = render(hold_lines.at(offset + i));
+                if (i == y - 1){
+                    //the cursor's line: start coffset columns in, so the part with the cursor is visible
+                    if (coffset < static_cast<int>(shown.size())){
+                        std::cout << shown.substr(coffset, max_col);
+                    }
+                }
+                //every other line starts at column 0; if it's too long, cut it and mark the last column with >
+                else if (static_cast<int>(shown.size()) > max_col){
+                    std::cout << shown.substr(0, max_col - 1) << ">";
+                }
+                else{
+                    std::cout << shown;
+                }
             }
             else{
                 std::cout << "~";
@@ -173,12 +211,14 @@ struct Editor{
         home,
         end,
         ctrl_end,
+        del,
+        backspace,
     };
 
     //wait for one key and say which one it was
     Keys read_keys(){
         char seq[5];
-        char ch;
+
         //VMIN=0/VTIME=1: read gives back 0 after 0.1s with no key, so keep asking until one arrives
         ssize_t n = 0;
         while (n == 0){
@@ -187,8 +227,9 @@ struct Editor{
         if(n == -1){
             throw std::runtime_error("Error reading input\n");
         }
-        
+
         if (ch == ctrl_q) return Keys::quit;
+        if (ch == backspace) return Keys::backspace;
         if (ch == ESC){
             //the rest of an escape sequence arrives right after the ESC; take only the first 2 bytes
             //(a letter ends the key; a digit means more bytes follow), s = how many came (0 = a lone Esc press)
@@ -199,7 +240,7 @@ struct Editor{
             }
             if(s == -1){
                 throw std::runtime_error("Error reading input\n");
-            }  
+            }
             if (s > 1 && seq[0] == '['){
                 if (seq[1] == 'A') return Keys::arrow_up;
                 if (seq[1] == 'B') return Keys::arrow_down;
@@ -207,6 +248,8 @@ struct Editor{
                 if (seq[1] == 'D') return Keys::arrow_left;
                 if (seq[1] == 'H') return Keys::home;
                 if (seq[1] == 'F') return Keys::end;
+
+
                 //Ctrl-End = ESC [ 1 ; 5 F: read the last 3 bytes into seq[2] .. seq[4]
                 if (seq[1] == '1'){
                     ssize_t s3 = read(STDIN_FILENO, &seq[2], 3);
@@ -218,7 +261,7 @@ struct Editor{
                     if (seq[2] == ';' && seq[3] == '5' && seq[4] == 'F') return Keys::ctrl_end;
                 }
                 //Page Up = ESC [ 5 ~, Page Down = ESC [ 6 ~: read the last byte into seq[2]
-                if (seq[1] == '5' || seq[1] == '6'){
+                if (seq[1] == '5' || seq[1] == '6' || seq[1] == '3'){
                     ssize_t s1 = read(STDIN_FILENO, &seq[2], 1);
                     if (s1 == -1){
                         throw std::runtime_error("Error reading input\n");
@@ -227,70 +270,91 @@ struct Editor{
                     //seq[1] says which key it is
                     if (seq[1] == '5' && seq[2] == '~') return Keys::pg_up;
                     if (seq[1] == '6' && seq[2] == '~') return Keys::pg_down;
+                    if (seq[1] == '3' && seq[2] == '~') return Keys::del;
                 }
             }
-            else{
-                return Keys::other;
-            }
+
         }
 
         return Keys::other;
-    }
-    int columns(int line ){
-   		int col = 0;
-     	
-     	for (int i = 0; i < c_index; ++i){
-      		std::string characters = hold_lines[file_line];
-      		if (characters[i] == '\x09'){
-        		col = col + (4 - (col % 4));
-            }
-            else{
-                ++col;
-      	    }
-        	
-        }
-        return col;
     }
     //the editor's main loop: wait for a key, update the cursor and scroll, redraw; until ctrl-q
     int keyboard(){
         window_size();
         kv = static_cast<int>(hold_lines.size());
-        
-        while (true){
-        	
-         	if (kv > 0){
-        		file_line = offset + y - 1;
-         		text_length = static_cast<int>(hold_lines[file_line].size());
 
-          	}
-            //each key only changes the state (x, y, offset); the checks below keep it valid
+        while (true){
+            //the file line under the cursor before this key, and its length
+            int line = offset + y - 1;
+            int text_length = 0;
+            if (kv > 0){
+                text_length = static_cast<int>(hold_lines[line].size());
+            }
+
+            //each key only changes the state (y, c_index, offset); the checks below keep it valid
             switch(read_keys()){
-            
+
                 case Keys::arrow_up : y--; break;
                 case Keys::arrow_down : y++; break;
                 case Keys::arrow_right :
                                         if (c_index < text_length){
-                                        	++c_index;
-                                         
+                                            ++c_index;
                                         }
-                                        else if (file_line < kv - 1 && kv > 0){
+                                        //at the end of a line: go to the start of the next one
+                                        else if (line < kv - 1 && kv > 0){
                                             y++;
                                             c_index = 0;
                                         }
                                         break;
-                case Keys::arrow_left : 
-                                            if (c_index > 0) c_index--;
-                                            else if (file_line > 0 && kv > 0){
-                                                y--;
-                                                c_index = INT_MAX;
-                                            }
-                                            break;
+                case Keys::arrow_left :
+                                        if (c_index > 0) c_index--;
+                                        //at the start of a line: go to the end of the one above (the clamp below finds the end)
+                                        else if (line > 0 && kv > 0){
+                                            y--;
+                                            c_index = INT_MAX;
+                                        }
+                                        break;
                 case Keys::quit : std::cout << "\033[2J\033[H" << std::flush; return 1;
-                case Keys::other : break;
+                case Keys::other :
+                                if (kv > 0){
+
+                                    if (std::isprint(static_cast<unsigned char>(ch))){
+                                        if (kv == 0){
+                                        hold_lines.push_back("");
+                                        kv = 1;
+                                        y = 1;
+                                        offset = 0;
+                                        c_index = 0;
+                                        line = 0;
+                                    }
+                                     hold_lines[line].insert(c_index, 1, ch);
+
+                                     ++c_index;
+                                }
+                                break;
+                case Keys::backspace :
+                                if (kv > 0){
+                                    if (c_index > 0){
+                                        hold_lines[line].erase(c_index -1, 1);
+                                        --c_index;
+                                    }
+                                    else if (line > 0 && kv > 0){
+                                        std::string& prior_line = hold_lines[line - 1];
+                                        int prior_length = static_cast<int>(prior_line.size());
+                                        prior_line += hold_lines[line];
+                                        hold_lines.erase(hold_lines.begin() + line);
+                                        kv = kv - 1;
+                                        y--;
+
+                                        c_index = prior_length;
+                                    }
+                                }
+                                break;
                 case Keys::pg_up : y = 1; break;
                 case Keys::pg_down : y = max_row; break;
                 case Keys::home : c_index = 0; break;
                 case Keys::end : c_index = INT_MAX; break;
+                case Keys::del : break;
                 case Keys::ctrl_end :
                     //show the last screenful of the file (or from the top, if it all fits), cursor on the bottom row
                     offset = kv - max_row;
@@ -300,8 +364,7 @@ struct Editor{
                     y = max_row;
                     break;
             }
-            
-            
+
             //above the top row: stay on row 1 and scroll up a line, if there is one above
             if (y < 1){
                 if (offset > 0){
@@ -322,24 +385,39 @@ struct Editor{
             if (offset + y > kv && kv > 0){
                 y = kv - offset;
             }
-                
-            if(kv > 0){
-            fline = offset + y - 1;
-            tlength = static_cast<int>(hold_lines[fline].size());
-                if (c_index > tlength) c_index = tlength;
-            x = 1 + columns(file_line);
+
+            if (kv > 0){
+                //the file line under the cursor now (the key may have moved it)
+                int new_line = offset + y - 1;
+                const std::string& text = hold_lines[new_line];
+                int new_length = static_cast<int>(text.size());
+
+                //snap to the end of a shorter line
+                if (c_index > new_length) c_index = new_length;
+                if (c_index < 0) c_index = 0;
+
+                //a different line starts unshifted, which also puts the line we left back at column 0
+                if (new_line != line) coffset = 0;
+
+                //the screen column the cursor's character sits at, as if the line weren't shifted
+                int rcol = render_col(text, c_index);
+                //cursor off the left edge: shift back so it's in the first column
+                if (rcol < coffset) coffset = rcol;
+                //cursor off the right edge: shift just enough that it's in the last column
+                if (rcol >= coffset + max_col) coffset = rcol - max_col + 1;
+
+                //terminal column (from 1) = where it would be, minus how far the line is shifted
+                x = 1 + rcol - coffset;
             }
-            else if (kv == 0){
-            	c_index = 0;
-            }    
-            if (c_index < 0){
-            	c_index = 0;
+            else{
+                c_index = 0;
+                coffset = 0;
             }
-            
+
             window_size();
         }
-        
-		return 0;
+
+        return 0;
     }
 };
 
