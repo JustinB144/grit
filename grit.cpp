@@ -326,6 +326,7 @@ struct Editor{
                                         offset = 0;
                                         c_index = 0;
                                         line = 0;
+                                        }
                                     }
                                      hold_lines[line].insert(c_index, 1, ch);
 
