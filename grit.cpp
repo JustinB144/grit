@@ -1,3 +1,4 @@
+#include <cctype>
 #include <climits>
 #include<vector>
 #include<cerrno>
@@ -15,7 +16,8 @@
 constexpr char ESC = '\x1b';
 constexpr char ctrl_q = '\x11';
 constexpr char TAB = '\x09';
-constexpr char backspace = '\x7f';
+constexpr char BACKSPACE = '\x7f';
+constexpr char ENTER = '\x0d';
 //owns the terminal's raw mode: constructing it turns raw mode on, destroying it turns it off
 class Raw_Mode{
 
@@ -99,6 +101,8 @@ std::string render(const std::string& line){
                 out += ' ';
             }
         }
+       
+
         else{
             out += ch;
         }
@@ -125,7 +129,22 @@ struct Editor{
     //how many lines the file has
     int kv = 0;
     char ch = 0;
-
+    //the file line under the cursor before this key, and its length
+    int line = offset + y - 1;
+    
+    
+      
+    int no_file(){
+        if (kv == 0){
+            hold_lines.push_back("");
+            kv = 1;
+            y = 1;
+            offset = 0;
+            c_index = 0;
+            line = 0;
+        }
+        return 1;
+    }
     //draw one full screen: clear, one file line (or ~ past the end) per row,
     //the welcome message if no lines were loaded, then the cursor at (y, x)
     void window_size(){
@@ -213,6 +232,8 @@ struct Editor{
         ctrl_end,
         del,
         backspace,
+        esc,
+        enter,
     };
 
     //wait for one key and say which one it was
@@ -229,14 +250,15 @@ struct Editor{
         }
 
         if (ch == ctrl_q) return Keys::quit;
-        if (ch == backspace) return Keys::backspace;
+        if (ch == BACKSPACE) return Keys::backspace;
+        if (ch == ENTER) return Keys::enter;
         if (ch == ESC){
             //the rest of an escape sequence arrives right after the ESC; take only the first 2 bytes
             //(a letter ends the key; a digit means more bytes follow), s = how many came (0 = a lone Esc press)
             //reading only what this key needs leaves the next key's bytes alone when keys pile up
             ssize_t s = read(STDIN_FILENO, seq, 2);
             if (s == 0){
-                return Keys::other;
+                return Keys::esc;
             }
             if(s == -1){
                 throw std::runtime_error("Error reading input\n");
@@ -282,59 +304,44 @@ struct Editor{
     int keyboard(){
         window_size();
         kv = static_cast<int>(hold_lines.size());
-
         while (true){
-            //the file line under the cursor before this key, and its length
-            int line = offset + y - 1;
+            line = offset + y - 1;
             int text_length = 0;
             if (kv > 0){
                 text_length = static_cast<int>(hold_lines[line].size());
             }
-
             //each key only changes the state (y, c_index, offset); the checks below keep it valid
             switch(read_keys()){
-
                 case Keys::arrow_up : y--; break;
                 case Keys::arrow_down : y++; break;
                 case Keys::arrow_right :
-                                        if (c_index < text_length){
-                                            ++c_index;
-                                        }
-                                        //at the end of a line: go to the start of the next one
-                                        else if (line < kv - 1 && kv > 0){
-                                            y++;
-                                            c_index = 0;
-                                        }
-                                        break;
+                                    if (c_index < text_length){
+                                        ++c_index;
+                                    }
+                                    //at the end of a line: go to the start of the next one
+                                    else if (line < kv - 1 && kv > 0){
+                                        y++;
+                                        c_index = 0;
+                                    }
+                                    break;
                 case Keys::arrow_left :
-                                        if (c_index > 0) c_index--;
-                                        //at the start of a line: go to the end of the one above (the clamp below finds the end)
-                                        else if (line > 0 && kv > 0){
-                                            y--;
-                                            c_index = INT_MAX;
-                                        }
-                                        break;
+                                    if (c_index > 0) c_index--;
+                                    //at the start of a line: go to the end of the one above (the clamp below finds the end)
+                                    else if (line > 0 && kv > 0){
+                                        y--;
+                                        c_index = INT_MAX;
+                                    }
+                                    break;
                 case Keys::quit : std::cout << "\033[2J\033[H" << std::flush; return 1;
                 case Keys::other :
-                                if (kv > 0){
-
-                                    if (std::isprint(static_cast<unsigned char>(ch))){
-                                        if (kv == 0){
-                                        hold_lines.push_back("");
-                                        kv = 1;
-                                        y = 1;
-                                        offset = 0;
-                                        c_index = 0;
-                                        line = 0;
-                                        }
+                                    if (std::isprint(static_cast<unsigned char>(ch)) || ch == TAB){
+                                        no_file();
+                                        hold_lines[line].insert(c_index, 1, ch);
+                                        ++c_index;
                                     }
-                                     hold_lines[line].insert(c_index, 1, ch);
-
-                                     ++c_index;
-                                }
-                                break;
+                                    break;
                 case Keys::backspace :
-                                if (kv > 0){
+                                    if (kv > 0){
                                     if (c_index > 0){
                                         hold_lines[line].erase(c_index -1, 1);
                                         --c_index;
@@ -346,24 +353,41 @@ struct Editor{
                                         hold_lines.erase(hold_lines.begin() + line);
                                         kv = kv - 1;
                                         y--;
-
                                         c_index = prior_length;
                                     }
-                                }
-                                break;
+                                    }
+                                    break;
                 case Keys::pg_up : y = 1; break;
                 case Keys::pg_down : y = max_row; break;
                 case Keys::home : c_index = 0; break;
                 case Keys::end : c_index = INT_MAX; break;
-                case Keys::del : break;
+                case Keys::del :    no_file();
+                					/* 
+                					if (kv > 0){ //incomplete
+                                        hold_lines.erase(hold_lines, c_index)
+                                    }
+                                    */
+                                    break;
                 case Keys::ctrl_end :
-                    //show the last screenful of the file (or from the top, if it all fits), cursor on the bottom row
-                    offset = kv - max_row;
-                    if (offset < 0){
-                        offset = 0;
-                    }
-                    y = max_row;
-                    break;
+                                    //show the last screenful of the file (or from the top, if it all fits), cursor on the bottom row
+                                    offset = kv - max_row;
+                                    if (offset < 0){
+                                        offset = 0;
+                                    }
+                                    y = max_row;
+                                    break;
+                case Keys::enter :
+                                    no_file();
+                                    if (kv > 0){
+                                        std::string copy = hold_lines[line].substr(c_index);
+                                        hold_lines[line].erase(c_index);
+                                        hold_lines.insert(hold_lines.begin() + line + 1, copy);
+                                        kv = kv + 1;
+                                        y++;
+                                        c_index = 0;
+                                    }
+                                    break;
+                case Keys::esc : break;                
             }
 
             //above the top row: stay on row 1 and scroll up a line, if there is one above
