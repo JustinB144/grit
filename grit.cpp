@@ -20,6 +20,8 @@ constexpr char ctrl_q = '\x11';
 constexpr char TAB = '\x09';
 constexpr char BACKSPACE = '\x7f';
 constexpr char ENTER = '\x0d';
+constexpr char CTRL_S = '\x13';
+constexpr char CTRL_X = '\x18';
 
 //owns the terminal's raw mode: constructing it turns raw mode on, destroying it turns it off
 class Raw_Mode{
@@ -141,13 +143,17 @@ struct Editor{
     std::string file_name;
     //true when the lines are different from how they were when the editor started
     bool edit = false;
-
+    std::string msg;
     //draw the status bar on the bottom row in reverse video:
     //file name, number of lines, cursor line and column (both from 0), and [MODIFIED] if edited
     void last_row(){
         std::ostringstream info;
-
-        if (edit){
+        if (msg.size() > 0){
+        	info << "\033[" << max_row << ";1H" << "\033[7m"
+         		 << msg 
+         		 <<  "\033[0m";
+        }
+        else if (edit){
             info << "\033[" << max_row << ";1H" << "\033[7m"
                  << "File: [" << file_name << "] line #: [" << kv << "] Line: [" << line << "] col: [" << c_index << "]"
                  << " [MODIFIED]" << "\033[0m";
@@ -258,6 +264,7 @@ struct Editor{
         backspace,
         esc,
         enter,
+        command_line,
     };
 
     //wait for one key and say which one it was
@@ -276,6 +283,7 @@ struct Editor{
         if (ch == ctrl_q) return Keys::quit;
         if (ch == BACKSPACE) return Keys::backspace;
         if (ch == ENTER) return Keys::enter;
+        if (ch == CTRL_X) return Keys::command_line;
         if (ch == ESC){
             //the rest of an escape sequence arrives right after the ESC; take only the first 2 bytes
             //(a letter ends the key; a digit means more bytes follow), s = how many came (0 = a lone Esc press)
@@ -287,6 +295,7 @@ struct Editor{
             if (s == -1){
                 throw std::runtime_error("Error reading input\n");
             }
+
             if (s > 1 && seq[0] == '['){
                 if (seq[1] == 'A') return Keys::arrow_up;
                 if (seq[1] == 'B') return Keys::arrow_down;
@@ -322,7 +331,51 @@ struct Editor{
 
         return Keys::other;
     }
+    
+    int command_line(std::ostringstream& cm_message){
+    
+   	
+    while (true){
+    	
+     	msg << ":" << msg;
+      	window_size();
+       	std::cout << "\033[" << max_row << ";1H";
+        switch (read_keys()){
+        	case Keys::esc : 
+         		
+         		break;
 
+        	case Keys::enter :
+        	
+            	hold_lines[line].erase(hold_lines[line].begin() + 1, hold_lines[line].end());
+             	
+              	break;
+
+        	case Keys::other :
+	            //a printable character or a tab: insert it at the cursor
+	            if (std::isprint(static_cast<unsigned char>(ch)) || ch == TAB){
+	                hold_lines[line].insert(c_index, 1, ch);
+	                ++c_index;
+	            }
+	            break;
+													
+        	case Keys::backspace :
+			    if (kv > 0){
+			        //delete the character before the cursor
+			        if (c_index > 0){
+			            hold_lines[line].erase(c_index - 1, 1);
+			            --c_index;
+			        }
+			        //at the start of a line: join it onto the end of the line above
+			        else if (c_index < 0){
+			            c_index = 0;
+			        }
+			    }
+			    break;
+        }
+     	}
+       return 0;
+    }
     //the editor's main loop: wait for a key, update the text, cursor and scroll, redraw; until ctrl-q
     int keyboard(){
         window_size();
@@ -331,162 +384,162 @@ struct Editor{
         std::vector<std::string> og_vec;
         og_vec = hold_lines;
         while (true){
-            line = offset + y - 1;
-            int text_length = 0;
+        line = offset + y - 1;
+        int text_length = 0;
 
-            if (kv > 0){
-                text_length = static_cast<int>(hold_lines[line].size());
-            }
-            //each key only changes the state (the lines, kv, y, c_index, offset); the checks below keep it valid
-            switch (read_keys()){
-                case Keys::arrow_up : y--; break;
-                case Keys::arrow_down : y++; break;
-                case Keys::arrow_right :
-                    if (c_index < text_length){
-                        ++c_index;
-                    }
-                    //at the end of a line: go to the start of the next one
-                    else if (line < kv - 1 && kv > 0){
-                        y++;
-                        c_index = 0;
-                    }
-                    break;
-                case Keys::arrow_left :
-                    if (c_index > 0) c_index--;
-                    //at the start of a line: go to the end of the one above (the clamp below finds the end)
-                    else if (line > 0 && kv > 0){
-                        y--;
-                        c_index = INT_MAX;
-                    }
-                    break;
-                case Keys::quit : std::cout << "\033[2J\033[H" << std::flush; return 1;
-                case Keys::other :
-                    //a printable character or a tab: insert it at the cursor
-                    if (std::isprint(static_cast<unsigned char>(ch)) || ch == TAB){
-                        no_file();
-                        hold_lines[line].insert(c_index, 1, ch);
-                        ++c_index;
-                    }
-                    break;
-                case Keys::backspace :
-                    if (kv > 0){
-                        //delete the character before the cursor
-                        if (c_index > 0){
-                            hold_lines[line].erase(c_index - 1, 1);
-                            --c_index;
-                        }
-                        //at the start of a line: join it onto the end of the line above
-                        else if (line > 0){
-                            std::string& prior_line = hold_lines[line - 1];
-                            int prior_length = static_cast<int>(prior_line.size());
-                            prior_line += hold_lines[line];
-                            hold_lines.erase(hold_lines.begin() + line);
-                            kv = kv - 1;
-                            y--;
-                            c_index = prior_length;
-                        }
-                    }
-                    break;
-                case Keys::pg_up : y = 1; break;
-                case Keys::pg_down : y = max_text_row; break;
-                case Keys::home : c_index = 0; break;
-                case Keys::end : c_index = INT_MAX; break;
-                case Keys::del :
-                    if (kv > 0){
-                        //delete the character under the cursor
-                        if (c_index < text_length){
-                            hold_lines[line].erase(c_index, 1);
-                        }
-                        //at the end of a line: join the line below onto this one
-                        else if (offset + y < kv){
-                            std::string& post_line = hold_lines[line + 1];
-                            hold_lines[line] += post_line;
-                            hold_lines.erase(hold_lines.begin() + (line + 1));
-                            kv = kv - 1;
-                        }
-                    }
-                    break;
-                case Keys::ctrl_end :
-                    //show the last screenful of the file (or from the top, if it all fits), cursor on the bottom row
-                    offset = kv - max_text_row;
-                    if (offset < 0){
-                        offset = 0;
-                    }
-                    y = max_text_row;
-                    break;
-                case Keys::enter :
-                    //split the line at the cursor: the part after it moves down to a new line
-                    no_file();
-                    if (kv > 0){
-                        std::string copy = hold_lines[line].substr(c_index);
-                        hold_lines[line].erase(c_index);
-                        hold_lines.insert(hold_lines.begin() + line + 1, copy);
-                        kv = kv + 1;
-                        y++;
-                        c_index = 0;
-                    }
-                    break;
-                case Keys::esc : break;
-            }
-
-            //above the top row: stay on row 1 and scroll up a line, if there is one above
-            if (y < 1){
-                if (offset > 0){
-                    offset = offset - 1;
+        if (kv > 0){
+            text_length = static_cast<int>(hold_lines[line].size());
+        }
+        //each key only changes the state (the lines, kv, y, c_index, offset); the checks below keep it valid
+        switch (read_keys()){
+            case Keys::arrow_up : y--; break;
+            case Keys::arrow_down : y++; break;
+            case Keys::arrow_right :
+                if (c_index < text_length){
+                    ++c_index;
                 }
-                y = 1;
-            }
-
-            //below the bottom text row: stay on it and scroll down a line, if there is one below
-            if (y > max_text_row){
-                if (offset + max_text_row < kv){
-                    offset = offset + 1;
+                //at the end of a line: go to the start of the next one
+                else if (line < kv - 1 && kv > 0){
+                    y++;
+                    c_index = 0;
+                }
+                break;
+            case Keys::arrow_left :
+                if (c_index > 0) c_index--;
+                //at the start of a line: go to the end of the one above (the clamp below finds the end)
+                else if (line > 0 && kv > 0){
+                    y--;
+                    c_index = INT_MAX;
+                }
+                break;
+            case Keys::quit : std::cout << "\033[2J\033[H" << std::flush; return 1;
+            case Keys::other :
+                //a printable character or a tab: insert it at the cursor
+                if (std::isprint(static_cast<unsigned char>(ch)) || ch == TAB){
+                    no_file();
+                    hold_lines[line].insert(c_index, 1, ch);
+                    ++c_index;
+                }
+                break;
+            case Keys::backspace :
+                if (kv > 0){
+                    //delete the character before the cursor
+                    if (c_index > 0){
+                        hold_lines[line].erase(c_index - 1, 1);
+                        --c_index;
+                    }
+                    //at the start of a line: join it onto the end of the line above
+                    else if (line > 0){
+                        std::string& prior_line = hold_lines[line - 1];
+                        int prior_length = static_cast<int>(prior_line.size());
+                        prior_line += hold_lines[line];
+                        hold_lines.erase(hold_lines.begin() + line);
+                        kv = kv - 1;
+                        y--;
+                        c_index = prior_length;
+                    }
+                }
+                break;
+            case Keys::pg_up : y = 1; break;
+            case Keys::pg_down : y = max_text_row; break;
+            case Keys::home : c_index = 0; break;
+            case Keys::end : c_index = INT_MAX; break;
+            case Keys::del :
+                if (kv > 0){
+                    //delete the character under the cursor
+                    if (c_index < text_length){
+                        hold_lines[line].erase(c_index, 1);
+                    }
+                    //at the end of a line: join the line below onto this one
+                    else if (offset + y < kv){
+                        std::string& post_line = hold_lines[line + 1];
+                        hold_lines[line] += post_line;
+                        hold_lines.erase(hold_lines.begin() + (line + 1));
+                        kv = kv - 1;
+                    }
+                }
+                break;
+            case Keys::ctrl_end :
+                //show the last screenful of the file (or from the top, if it all fits), cursor on the bottom row
+                offset = kv - max_text_row;
+                if (offset < 0){
+                    offset = 0;
                 }
                 y = max_text_row;
+                break;
+            case Keys::enter :
+                //split the line at the cursor: the part after it moves down to a new line
+                no_file();
+                if (kv > 0){
+                    std::string copy = hold_lines[line].substr(c_index);
+                    hold_lines[line].erase(c_index);
+                    hold_lines.insert(hold_lines.begin() + line + 1, copy);
+                    kv = kv + 1;
+                    y++;
+                    c_index = 0;
+                }
+                break;
+            case Keys::esc : break;
+        }
+
+        //above the top row: stay on row 1 and scroll up a line, if there is one above
+        if (y < 1){
+            if (offset > 0){
+                offset = offset - 1;
             }
+            y = 1;
+        }
 
-            //past the file's last line: put the cursor back on it (no lines = nothing to stop at)
-            if (offset + y > kv && kv > 0){
-                y = kv - offset;
+        //below the bottom text row: stay on it and scroll down a line, if there is one below
+        if (y > max_text_row){
+            if (offset + max_text_row < kv){
+                offset = offset + 1;
             }
+            y = max_text_row;
+        }
 
-            if (kv > 0){
-                //the file line under the cursor now (the key may have moved it)
-                
-                int new_line = offset + y - 1;
-                const std::string& text = hold_lines[new_line];
-                int new_length = static_cast<int>(text.size());
+        //past the file's last line: put the cursor back on it (no lines = nothing to stop at)
+        if (offset + y > kv && kv > 0){
+            y = kv - offset;
+        }
 
-                //modified = the lines no longer match the copy taken at the start
-                if (og_vec != hold_lines) edit = true;
-                else edit = false;
+        if (kv > 0){
+            //the file line under the cursor now (the key may have moved it)
+            
+            int new_line = offset + y - 1;
+            const std::string& text = hold_lines[new_line];
+            int new_length = static_cast<int>(text.size());
 
-                //snap to the end of a shorter line
-                if (c_index > new_length) c_index = new_length;
-                if (c_index < 0) c_index = 0;
+            //modified = the lines no longer match the copy taken at the start
+            if (og_vec != hold_lines) edit = true;
+            else edit = false;
 
-                //a different line starts unshifted, which also puts the line we left back at column 0
-                if (new_line != line) coffset = 0;
-                
-                //the screen column the cursor's character sits at, as if the line weren't shifted
-                int rcol = render_col(text, c_index);
-                //cursor off the left edge: shift back so it's in the first column
-                if (rcol < coffset) coffset = rcol;
-                //cursor off the right edge: shift just enough that it's in the last column
-                if (rcol >= coffset + max_col) coffset = rcol - max_col + 1;
+            //snap to the end of a shorter line
+            if (c_index > new_length) c_index = new_length;
+            if (c_index < 0) c_index = 0;
 
-                //terminal column (from 1) = where it would be, minus how far the line is shifted
-                x = 1 + rcol - coffset;
+            //a different line starts unshifted, which also puts the line we left back at column 0
+            if (new_line != line) coffset = 0;
+            
+            //the screen column the cursor's character sits at, as if the line weren't shifted
+            int rcol = render_col(text, c_index);
+            //cursor off the left edge: shift back so it's in the first column
+            if (rcol < coffset) coffset = rcol;
+            //cursor off the right edge: shift just enough that it's in the last column
+            if (rcol >= coffset + max_col) coffset = rcol - max_col + 1;
 
-                //reset line to after keys pressed
-                line = offset + y - 1;
-            }
-            else{
-                c_index = 0;
-                coffset = 0;
-            }
+            //terminal column (from 1) = where it would be, minus how far the line is shifted
+            x = 1 + rcol - coffset;
 
-            window_size();
+            //reset line to after keys pressed
+            line = offset + y - 1;
+        }
+        else{
+            c_index = 0;
+            coffset = 0;
+        }
+
+        window_size();
         }
 
         return 0;
