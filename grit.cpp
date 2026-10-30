@@ -143,27 +143,27 @@ struct Editor{
     std::string file_name;
     //true when the lines are different from how they were when the editor started
     bool edit = false;
-    std::string msg;
+    std::string cmd_message;
     //draw the status bar on the bottom row in reverse video:
     //file name, number of lines, cursor line and column (both from 0), and [MODIFIED] if edited
     void last_row(){
         std::ostringstream info;
-        if (msg.size() > 0){
-        	info << "\033[" << max_row << ";1H" << "\033[7m"
-         		 << msg 
-         		 <<  "\033[0m";
+        if (!cmd_message.empty()){
+            info << "\033[" << max_row << ";1H" << "\033[7m" << cmd_message << "\033[0m";
         }
         else if (edit){
             info << "\033[" << max_row << ";1H" << "\033[7m"
                  << "File: [" << file_name << "] line #: [" << kv << "] Line: [" << line << "] col: [" << c_index << "]"
                  << " [MODIFIED]" << "\033[0m";
         }
-        else info << "\033[" << max_row << ";1H" << "\033[7m"
-                  << "File: [" << file_name << "] line #: [" << kv << "] Line: [" << line << "] col: [" << c_index << "]"
-                  << "\033[0m";
-        std::string result = info.str();
-        std::cout << result;
+        else{
+            info << "\033[" << max_row << ";1H" << "\033[7m"
+                 << "File: [" << file_name << "] line #: [" << kv << "] Line: [" << line << "] col: [" << c_index << "]"
+                 << "\033[0m";
+        }
+        std::cout << info.str();
     }
+
 
     //no lines to type into (no file, or an empty one): make one empty line and put the cursor on it
     void no_file(){
@@ -267,6 +267,11 @@ struct Editor{
         command_line,
     };
 
+    enum class close{
+    	exit_program,
+     	exit_commandline,
+    };
+    
     //wait for one key and say which one it was
     Keys read_keys(){
         char seq[5];
@@ -332,50 +337,69 @@ struct Editor{
         return Keys::other;
     }
     
-    int command_line(std::ostringstream& cm_message){
+
+    close followup(std::string& ftext){
+        ftext = "Unsaved changes! Quit anyway? (y/n)";
+        window_size();
+        std::cout << "\033[" << max_row << ";" << ftext.size() + 1 << "H" << std::flush;
     
-   	
-    while (true){
-    	
-     	msg << ":" << msg;
-      	window_size();
-       	std::cout << "\033[" << max_row << ";1H";
-        switch (read_keys()){
-        	case Keys::esc : 
-         		
-         		break;
-
-        	case Keys::enter :
-        	
-            	hold_lines[line].erase(hold_lines[line].begin() + 1, hold_lines[line].end());
-             	
-              	break;
-
-        	case Keys::other :
-	            //a printable character or a tab: insert it at the cursor
-	            if (std::isprint(static_cast<unsigned char>(ch)) || ch == TAB){
-	                hold_lines[line].insert(c_index, 1, ch);
-	                ++c_index;
-	            }
-	            break;
-													
-        	case Keys::backspace :
-			    if (kv > 0){
-			        //delete the character before the cursor
-			        if (c_index > 0){
-			            hold_lines[line].erase(c_index - 1, 1);
-			            --c_index;
-			        }
-			        //at the start of a line: join it onto the end of the line above
-			        else if (c_index < 0){
-			            c_index = 0;
-			        }
-			    }
-			    break;
+        while (true){
+            Keys key = read_keys();
+            if (key == Keys::other && ch == 'y'){
+                ftext.clear();
+                return close::exit_program;
+            }
+            if (key == Keys::esc || (key == Keys::other && ch == 'n')){
+                ftext.clear();
+                return close::exit_commandline;
+            }
         }
-     	}
-       return 0;
     }
+
+
+    close command_line(std::string& cmtext){
+        cmtext = ":";
+        while (true){
+            window_size();
+            std::cout << "\033[" << max_row << ";" << cmtext.size() + 1 << "H" << std::flush;
+    
+            switch (read_keys()){
+                case Keys::esc :
+                    cmtext.clear();
+                    return close::exit_commandline;
+    
+                case Keys::enter :
+                    if (cmtext == ":q" && !edit){
+                        cmtext.clear();
+                        return close::exit_program;
+                    }
+                    else if (cmtext == ":q"){
+                        return followup(cmtext);
+                    }
+                    else if (cmtext == ":q!"){
+                        cmtext.clear();
+                        return close::exit_program;
+                    }
+                    break;
+    
+                case Keys::other :
+                    if (std::isprint(static_cast<unsigned char>(ch))){
+                        cmtext += ch;
+                    }
+                    break;
+    
+                case Keys::backspace :
+                    if (cmtext.size() > 1){
+                        cmtext.pop_back();
+                    }
+                    break;
+    
+                default : break;
+            }
+        }
+    }
+
+    
     //the editor's main loop: wait for a key, update the text, cursor and scroll, redraw; until ctrl-q
     int keyboard(){
         window_size();
@@ -386,7 +410,10 @@ struct Editor{
         while (true){
         line = offset + y - 1;
         int text_length = 0;
-
+        
+       
+        
+       
         if (kv > 0){
             text_length = static_cast<int>(hold_lines[line].size());
         }
@@ -412,7 +439,9 @@ struct Editor{
                     c_index = INT_MAX;
                 }
                 break;
-            case Keys::quit : std::cout << "\033[2J\033[H" << std::flush; return 1;
+            case Keys::quit :
+             	std::cout << "\033[2J\033[H" << std::flush; return 1;
+              	break;
             case Keys::other :
                 //a printable character or a tab: insert it at the cursor
                 if (std::isprint(static_cast<unsigned char>(ch)) || ch == TAB){
@@ -480,8 +509,16 @@ struct Editor{
                 }
                 break;
             case Keys::esc : break;
-        }
+            case Keys::command_line :
+                if (command_line(cmd_message) == close::exit_program){
+                    std::cout << "\033[2J\033[H" << std::flush;
+                    return 1;
+                }
+                break;
 
+           	default: break;
+        }
+        
         //above the top row: stay on row 1 and scroll up a line, if there is one above
         if (y < 1){
             if (offset > 0){
