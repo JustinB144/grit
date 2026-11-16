@@ -1,4 +1,6 @@
 #include <cctype>
+
+#include <sys/stat.h>
 #include <climits>
 #include <vector>
 #include <cerrno>
@@ -13,6 +15,7 @@
 #include <cstring>
 #include <string>
 #include <fstream>
+#include <fcntl.h>
 
 //the raw bytes the keyboard sends for the keys we handle by hand
 constexpr char ESC = '\x1b';
@@ -20,8 +23,8 @@ constexpr char ctrl_q = '\x11';
 constexpr char TAB = '\x09';
 constexpr char BACKSPACE = '\x7f';
 constexpr char ENTER = '\x0d';
-constexpr char CTRL_S = '\x13';
 constexpr char CTRL_X = '\x18';
+
 
 //owns the terminal's raw mode: constructing it turns raw mode on, destroying it turns it off
 class Raw_Mode{
@@ -126,6 +129,7 @@ struct Editor{
     int max_col = 0;
     //the file's lines, one string per line, without line endings
     std::vector<std::string> hold_lines;
+    std::vector<std::string> og_vec;
     //the file line shown on the top row (0 = the file's first line);
     //the file line under the cursor is offset + y - 1
     int offset = 0;
@@ -368,12 +372,19 @@ struct Editor{
                     cmtext.clear();
                     return close::exit_commandline;
     
-                case Keys::enter :
+                case Keys::enter : 
+                	if (cmtext == ":w"){
+                   		
+                     	if (save()) cmtext = "wrote " + std::to_string(hold_lines.size()) + " lines";
+                     	else cmtext = std::string("save failed: ") + strerror(errno);
+                     	return close::exit_commandline;
+                 	}
                     if (cmtext == ":q" && !edit){
                         cmtext.clear();
                         return close::exit_program;
                     }
                     else if (cmtext == ":q"){
+                    	cmtext.clear();
                         return followup(cmtext);
                     }
                     else if (cmtext == ":q!"){
@@ -405,12 +416,11 @@ struct Editor{
         window_size();
         kv = static_cast<int>(hold_lines.size());
         //a copy of the lines as they started, to tell whether they've been modified
-        std::vector<std::string> og_vec;
         og_vec = hold_lines;
         while (true){
         line = offset + y - 1;
         int text_length = 0;
-        
+        cmd_message.clear();
        
         
        
@@ -581,6 +591,81 @@ struct Editor{
 
         return 0;
     }
+
+    bool save(){
+    	if (file_name == "no name") return false;
+        std::string data;
+        for (const std::string& s : hold_lines){
+            data += s;
+            data += '\n';
+        }
+
+        std::string tmp = file_name + ".tmp";
+        
+        
+       	mode_t mode = 0644;
+        struct stat st;
+        if (stat(file_name.c_str(), &st) == 0){
+            mode = st.st_mode & 0777;
+        }
+        
+        int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd == -1){
+        	int saved = errno;
+         	errno = saved;
+         	return false;
+        }
+        if (fchmod(fd, mode) == -1){
+       		int saved = errno;
+        	::close(fd);             
+        	unlink(tmp.c_str());
+         	errno = saved;
+         	return false;
+        }
+        ssize_t done = 0;
+        int d_size = static_cast<int>(data.size());
+        while (done < d_size){
+            ssize_t n = write(fd, data.data() + done, data.size() - done);
+            if (n == -1){
+            	int saved = errno;
+            	::close(fd);             
+             	unlink(tmp.c_str());
+              	errno = saved;
+              	return false;
+            }
+            done += n;
+        }
+        
+        if (fsync(fd) == -1){
+        	int saved = errno;
+      		::close(fd);             
+       		unlink(tmp.c_str());
+        	errno = saved;
+        	return false;
+        }
+        
+        //close before rename: a failed close can mean the data never fully made it out,
+        //so the temp file must not replace the original
+        if (::close(fd) == -1){
+        	int saved = errno;
+        	unlink(tmp.c_str());
+        	errno = saved;
+        	return false;
+        }
+
+        //the swap: the original is replaced all at once, never half-written
+        if (rename(tmp.c_str(), file_name.c_str()) == -1){
+        	int saved = errno;
+        	unlink(tmp.c_str());
+        	errno = saved;
+        	return false;
+        }
+
+        //the saved lines are the new "unmodified" state
+        og_vec = hold_lines;
+        edit = false;
+        return true;
+    }
 };
 
 int main(int argc, char *argv[]){
@@ -624,5 +709,6 @@ int main(int argc, char *argv[]){
         std::cout << e.what() << strerror(errno) << "\n";
         return 1;
     }
+	
     return 0;
 }
